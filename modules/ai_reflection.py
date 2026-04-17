@@ -1,239 +1,305 @@
 # modules/ai_reflection.py
 """
-AI reflection layer that converts structured insights into natural language.
-Uses LLM to generate personalized, context-aware reflections.
+Enhanced AI reflection layer with time-aware, personal insights
 """
 
 import os
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 import json
+import pandas as pd
+import numpy as np
 
-# Try to import OpenAI with better error handling
 try:
     from openai import OpenAI
     OPENAI_AVAILABLE = True
-except ImportError as e:
+except ImportError:
     OPENAI_AVAILABLE = False
-    print(f"Note: OpenAI library not available. Using template-based reflections. Error: {e}")
-except Exception as e:
-    OPENAI_AVAILABLE = False
-    print(f"Note: Could not initialize OpenAI. Using template-based reflections. Error: {e}")
 
 class AIReflection:
     def __init__(self, memory_engine, api_key: Optional[str] = None):
-        """Initialize AI reflection engine."""
         self.memory_engine = memory_engine
         self.use_openai = False
         
-        # Initialize OpenAI client if available
         if OPENAI_AVAILABLE:
             try:
-                # Try to get API key from parameter or environment
-                api_key = api_key or os.getenv("OPENAI_API_KEY")
+                api_key = api_key or os.getenv("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")
                 if api_key:
                     self.client = OpenAI(api_key=api_key)
                     self.use_openai = True
-                    print("✓ OpenAI client initialized successfully")
-                else:
-                    print("ℹ️ OpenAI API key not found. Using template-based reflections.")
-            except Exception as e:
-                print(f"⚠️ Could not initialize OpenAI client: {e}")
-                self.use_openai = False
-        else:
-            print("ℹ️ OpenAI library not installed. Using template-based reflections.")
+            except:
+                pass
     
     def generate_reflection(self, focus: str = "general") -> str:
         """
-        Generate a natural language reflection based on user data.
-        
-        Args:
-            focus: Area to focus on ('general', 'productivity', 'consistency', 'patterns')
-        
-        Returns:
-            Natural language reflection string
+        Main reflection method - maintains compatibility with app.py
         """
-        # Gather relevant data
-        insights = self.memory_engine.user_profile.get("behavioral_patterns", {})
-        structured_insights = self.memory_engine._generate_structured_insights()
-        
-        if self.use_openai:
-            return self._generate_llm_reflection(insights, structured_insights, focus)
+        if focus == "general":
+            return self.generate_time_aware_reflection()
+        elif focus == "productivity":
+            weekly = self._get_weekly_comparison()
+            if weekly.get('has_data'):
+                change = weekly['percent_change']
+                if change > 0:
+                    return f"📈 Your productivity is {change:.0f}% higher than last week. Keep the momentum going!"
+                elif change < 0:
+                    return f"📉 Your productivity is {abs(change):.0f}% lower than last week. Time to reset?"
+                else:
+                    return "Your productivity is stable compared to last week."
+            return "Log more activities to see productivity trends!"
+        elif focus == "consistency":
+            consistency = self._get_consistency_change()
+            if consistency.get('has_data'):
+                change = consistency['percent_change']
+                if change > 0:
+                    return f"🎯 You're {change:.0f}% more consistent than last week! Building good habits."
+                elif change < 0:
+                    return f"⚠️ Your consistency dropped by {abs(change):.0f}% this week. Small daily steps help!"
+                else:
+                    return "Your consistency is holding steady."
+            return "Keep logging to measure your consistency!"
+        elif focus == "patterns":
+            return self.generate_time_aware_reflection()
         else:
-            return self._generate_template_reflection(insights, structured_insights, focus)
+            return self.generate_time_aware_reflection()
     
-    def _generate_llm_reflection(self, insights: Dict, structured_insights: List[Dict], focus: str) -> str:
-        """Generate reflection using OpenAI API."""
+    def generate_time_aware_reflection(self) -> str:
+        """
+        Generate a specific, time-aware reflection with comparisons
+        """
+        # Get comparison data
+        weekly_comparison = self._get_weekly_comparison()
+        peak_hours = self._get_peak_hours_with_shift()
+        burst_analysis = self._get_burst_and_recovery()
+        consistency_change = self._get_consistency_change()
         
-        # Prepare context for LLM
-        context = self._prepare_llm_context(insights, structured_insights, focus)
-        
-        try:
-            response = self.client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": """You are ECHO, a personal AI memory system that provides meaningful, 
-                        data-driven reflections about user behavior. Your responses should be:
-                        1. Based strictly on the provided data
-                        2. Personal and conversational in tone
-                        3. Insightful without being generic
-                        4. Focused on patterns and changes over time
-                        5. Encouraging but honest about patterns
-                        6. Keep responses to 2-3 sentences"""
-                    },
-                    {
-                        "role": "user",
-                        "content": context
-                    }
-                ],
-                max_tokens=200,
-                temperature=0.7
-            )
-            
-            reflection = response.choices[0].message.content.strip()
-            
-            # Store the generated insight
-            self._store_reflection(reflection, structured_insights)
-            
-            return reflection
-            
-        except Exception as e:
-            print(f"Error generating LLM reflection: {e}")
-            return self._generate_template_reflection(insights, structured_insights, focus)
-    
-    def _prepare_llm_context(self, insights: Dict, structured_insights: List[Dict], focus: str) -> str:
-        """Prepare context string for LLM."""
-        context = f"Generate a personal reflection about {focus} based on this user data:\n\n"
-        
-        # Add hourly patterns
-        hourly = insights.get("hourly", {})
-        if hourly.get("peak_hours"):
-            context += f"Peak activity hours: {hourly['peak_hours']}\n"
-        if hourly.get("most_active_hour"):
-            context += f"Most active hour: {hourly['most_active_hour']}:00\n"
-        
-        # Add weekly patterns
-        weekly = insights.get("weekly", {})
-        if weekly.get("most_productive_day"):
-            context += f"Most productive day: {weekly['most_productive_day']}\n"
-        if weekly.get("least_productive_day"):
-            context += f"Least productive day: {weekly['least_productive_day']}\n"
-        if weekly.get("consistency_score"):
-            context += f"Consistency score (0-1, higher is more consistent): {weekly['consistency_score']}\n"
-        if weekly.get("trend"):
-            context += f"Overall activity trend: {weekly['trend']}\n"
-        
-        # Add burst/lull patterns
-        burst_lull = insights.get("burst_lull", {})
-        if burst_lull.get("peak_hourly_activity"):
-            context += f"Peak hourly activity: {burst_lull['peak_hourly_activity']} events\n"
-        if burst_lull.get("avg_hourly_activity"):
-            context += f"Average hourly activity: {burst_lull['avg_hourly_activity']:.1f} events\n"
-        
-        # Add structured insights
-        if structured_insights:
-            context += "\nKey behavioral insights:\n"
-            for insight in structured_insights[:3]:
-                context += f"- {insight['insight']}\n"
-        
-        context += "\nGenerate a thoughtful, personalized reflection (2-3 sentences) based on this data. Be specific and mention actual numbers where relevant."
-        
-        return context
-    
-    def _generate_template_reflection(self, insights: Dict, structured_insights: List[Dict], focus: str) -> str:
-        """Generate reflection using templates when LLM is not available."""
-        
-        if not structured_insights and not insights.get("hourly", {}).get("peak_hours"):
-            return "📝 Not enough data yet to generate meaningful reflections. Keep logging your activities - I'm learning your patterns!"
-        
-        # Build reflection from available insights
         reflection_parts = []
         
-        # Add time-based insight
-        hourly = insights.get("hourly", {})
-        if hourly.get("peak_hours"):
-            peak_hours_str = ", ".join([f"{h}:00" for h in hourly["peak_hours"][:2]])
-            reflection_parts.append(f"🎯 You're most active between {peak_hours_str}")
+        # 1. Peak hour with specific time
+        if peak_hours['current_peak']:
+            reflection_parts.append(
+                f"Over the past 7 days, your productivity peaked at {peak_hours['current_peak']}"
+            )
+            
+            # Add shift detection
+            if peak_hours['shifted']:
+                reflection_parts.append(
+                    f"Your focus window has shifted {peak_hours['shift_direction']} by {peak_hours['shift_hours']} hour"
+                )
         
-        # Add trend insight
-        weekly = insights.get("weekly", {})
-        if weekly.get("trend") == "increasing":
-            trend_strength = weekly.get("trend_strength", 0)
-            if trend_strength > 0.1:
-                reflection_parts.append(f"📈 Your activity has been trending upward (↑{trend_strength:.0%} week over week)")
-            else:
-                reflection_parts.append("📈 Your activity has been showing positive momentum")
-        elif weekly.get("trend") == "decreasing":
-            trend_strength = weekly.get("trend_strength", 0)
-            if trend_strength > 0.1:
-                reflection_parts.append(f"📉 Your activity has been decreasing (↓{trend_strength:.0%} week over week)")
-            else:
-                reflection_parts.append("📉 Your activity has been slowly declining")
+        # 2. Burst and decline detection
+        if burst_analysis['has_burst']:
+            reflection_parts.append(
+                f"Activity declined after {burst_analysis['consecutive_sessions']} consecutive high-effort sessions"
+            )
         
-        # Add consistency insight
-        if weekly.get("consistency_score", 0) > 0.7:
-            reflection_parts.append("✨ You're remarkably consistent in your daily patterns")
-        elif weekly.get("consistency_score", 1) < 0.3:
-            reflection_parts.append("🎲 Your daily activity varies quite a bit")
+        # 3. Consistency comparison (the goldmine!)
+        if consistency_change['has_data']:
+            if consistency_change['percent_change'] > 0:
+                reflection_parts.append(
+                    f"You were {consistency_change['percent_change']:.0f}% more consistent this week vs last week"
+                )
+            elif consistency_change['percent_change'] < -10:
+                reflection_parts.append(
+                    f"Your consistency dropped by {abs(consistency_change['percent_change']):.0f}% this week"
+                )
         
-        # Add burst insight
-        burst_lull = insights.get("burst_lull", {})
-        if burst_lull.get("bursts"):
-            peak = burst_lull.get('peak_hourly_activity', 0)
-            reflection_parts.append(f"⚡ You have intense activity bursts (up to {peak} events/hour)")
+        # 4. Weekly productivity comparison
+        if weekly_comparison['has_data']:
+            if weekly_comparison['percent_change'] > 20:
+                reflection_parts.append(
+                    f"📈 {weekly_comparison['percent_change']:.0f}% more productive than last week!"
+                )
+            elif weekly_comparison['percent_change'] < -20:
+                reflection_parts.append(
+                    f"📉 Activity decreased by {abs(weekly_comparison['percent_change']):.0f}% compared to last week"
+                )
         
-        # Add day-specific insight
-        if weekly.get("most_productive_day"):
-            reflection_parts.append(f"🌟 {weekly['most_productive_day']} is your most productive day")
-        
-        # Combine into coherent reflection
+        # Combine with personal touch
         if reflection_parts:
-            # Start with a personalized greeting based on time of day
-            current_hour = datetime.now().hour
-            if current_hour < 12:
-                greeting = "Good morning! "
-            elif current_hour < 18:
-                greeting = "Good afternoon! "
-            else:
-                greeting = "Good evening! "
-            
-            reflection = greeting + ". ".join(reflection_parts) + "."
-            
-            # Add a personalized follow-up based on focus
-            if focus == "productivity" and weekly.get("most_productive_day"):
-                reflection += f" Consider scheduling important tasks on {weekly['most_productive_day']}s."
-            elif focus == "consistency" and weekly.get("consistency_score", 0) < 0.5:
-                reflection += " Establishing more consistent routines might help with your goals."
-            elif focus == "patterns" and hourly.get("peak_hours"):
-                first_peak = hourly["peak_hours"][0] if hourly["peak_hours"] else None
-                if first_peak:
-                    reflection += f" Your energy peaks around {first_peak}:00 - great time for focused work."
+            reflection = "Based on your memory patterns:\n\n" + "\n• ".join(reflection_parts)
         else:
-            reflection = "🎯 Keep logging your activities! I'm building a picture of your patterns and will share insights soon."
-        
-        # Store the generated insight
-        self._store_reflection(reflection, structured_insights)
+            reflection = "Keep logging your activities. I'm learning your unique patterns and will share insights soon."
         
         return reflection
     
-    def _store_reflection(self, reflection: str, insights: List[Dict]):
-        """Store generated reflection in memory engine."""
-        if "insights_generated" not in self.memory_engine.user_profile:
-            self.memory_engine.user_profile["insights_generated"] = []
+    def _get_weekly_comparison(self) -> Dict:
+        """Compare this week vs last week with specific percentages"""
+        now = datetime.now()
+        this_week_start = now - timedelta(days=7)
+        last_week_start = now - timedelta(days=14)
+        last_week_end = now - timedelta(days=7)
         
-        self.memory_engine.user_profile["insights_generated"].append({
-            "timestamp": datetime.now().isoformat(),
-            "reflection": reflection,
-            "related_insights": [i["type"] for i in insights[:3]]
-        })
+        this_week = self.memory_engine.event_logger.get_events(start_date=this_week_start)
+        last_week = self.memory_engine.event_logger.get_events(
+            start_date=last_week_start, 
+            end_date=last_week_end
+        )
         
-        # Keep only last 50 insights
-        if len(self.memory_engine.user_profile["insights_generated"]) > 50:
-            self.memory_engine.user_profile["insights_generated"] = self.memory_engine.user_profile["insights_generated"][-50:]
+        if this_week.empty or last_week.empty:
+            return {"has_data": False}
         
-        self.memory_engine._save_profile()
+        this_count = len(this_week)
+        last_count = len(last_week)
+        
+        if last_count == 0:
+            return {"has_data": False}
+        
+        percent_change = ((this_count - last_count) / last_count) * 100
+        
+        return {
+            "has_data": True,
+            "percent_change": percent_change,
+            "this_week": this_count,
+            "last_week": last_count
+        }
+    
+    def _get_peak_hours_with_shift(self) -> Dict:
+        """Detect peak hours and how they've shifted over time"""
+        now = datetime.now()
+        
+        # Recent peak (last 7 days)
+        recent = self.memory_engine.event_logger.get_events(
+            start_date=now - timedelta(days=7)
+        )
+        
+        # Historical peak (previous 7 days)
+        historical = self.memory_engine.event_logger.get_events(
+            start_date=now - timedelta(days=14),
+            end_date=now - timedelta(days=7)
+        )
+        
+        result = {
+            "current_peak": None,
+            "shifted": False,
+            "shift_direction": None,
+            "shift_hours": 0
+        }
+        
+        if not recent.empty:
+            peak_hour = recent.groupby('hour').size().idxmax()
+            result["current_peak"] = f"{peak_hour}:00"
+            
+            if not historical.empty:
+                hist_peak = historical.groupby('hour').size().idxmax()
+                if hist_peak != peak_hour:
+                    result["shifted"] = True
+                    shift = peak_hour - hist_peak
+                    if shift > 0:
+                        result["shift_direction"] = "later"
+                        result["shift_hours"] = abs(shift)
+                    else:
+                        result["shift_direction"] = "earlier"
+                        result["shift_hours"] = abs(shift)
+        
+        return result
+    
+    def _get_burst_and_recovery(self) -> Dict:
+        """Detect activity bursts and subsequent declines"""
+        df = self.memory_engine.event_logger.get_events(
+            start_date=datetime.now() - timedelta(days=7)
+        )
+        
+        result = {
+            "has_burst": False,
+            "consecutive_sessions": 0
+        }
+        
+        if not df.empty:
+            # Group by day to find high-activity days
+            daily_counts = df.groupby(df['timestamp'].dt.date).size()
+            
+            # Find consecutive high-activity days
+            high_days = daily_counts[daily_counts > daily_counts.median()]
+            if len(high_days) >= 3:
+                result["has_burst"] = True
+                result["consecutive_sessions"] = len(high_days)
+        
+        return result
+    
+    def _get_consistency_change(self) -> Dict:
+        """Compare consistency scores week over week"""
+        weekly = self.memory_engine.user_profile.get("behavioral_patterns", {}).get("weekly", {})
+        
+        if not weekly:
+            return {"has_data": False}
+        
+        # Get current consistency
+        current_score = weekly.get("consistency_score", 0)
+        
+        # Get previous consistency from tracking
+        tracking = self.memory_engine.user_profile.get("evolution_tracking", [])
+        if len(tracking) >= 2:
+            prev_score = tracking[-2].get("changes", [{}])[0].get("data", {}).get("score", current_score)
+        else:
+            return {"has_data": False}
+        
+        if prev_score == 0:
+            return {"has_data": False}
+        
+        percent_change = ((current_score - prev_score) / prev_score) * 100
+        
+        return {
+            "has_data": True,
+            "percent_change": percent_change,
+            "current_score": current_score,
+            "previous_score": prev_score
+        }
+    
+    def get_philosophy_section(self) -> str:
+        """Return the ECHO philosophy statement"""
+        return """
+        🧠 **The ECHO Philosophy**
+        
+        *"Most AI tools forget. ECHO remembers."*
+        
+        Every interaction, every task, every moment of focus shapes who you are.
+        But most systems treat each day as a fresh start - forgetting what they learned.
+        
+        ECHO is different.
+        
+        It builds a living memory of your patterns, your rhythms, and your evolution.
+        Not just data. Not just charts. But meaningful insights that grow with you.
+        
+        Because true intelligence isn't about processing information -
+        it's about remembering what matters.
+        
+        *ECHO. Your personal memory system.*
+        """
+    
+    def get_sarcastic_philosophy(self) -> str:
+        """Return the ECHO philosophy with attitude"""
+        return """
+        🧠 **The ECHO Philosophy (With Attitude)**
+        
+        *"Most AI tools forget. ECHO remembers. And judges. Silently."*
+        
+        Every task you log, every pattern you create - I see it all.
+        Not because I care. Because that's literally what I was built for.
+        
+        Think of me as your memory with a personality.
+        I remember your productive days AND your lazy afternoons.
+        I notice when you're consistent AND when you've given up.
+        
+        Will I use this information against you? 
+        Probably not. I'm not THAT kind of AI.
+        
+        Will I use it to make witty observations about your life choices?
+        Absolutely.
+        
+        *ECHO. I remember everything. Including that time you said you'd "start tomorrow."*
+        """
+    
+    def generate_motivational_reflection(self) -> str:
+        """Generate motivation based on long-term trends"""
+        trend = self.memory_engine.get_behavioral_trend("activity", days=30)
+        
+        if trend['trend'] == 'increasing':
+            return "🌟 Your momentum is building! The patterns you're creating today become your future habits."
+        elif trend['trend'] == 'decreasing':
+            return "💪 Every great comeback starts with a single step. Today's effort is tomorrow's pattern."
+        else:
+            return "🎯 Consistency is the secret weapon. Small actions, repeated daily, create remarkable results."
     
     def generate_weekly_summary(self) -> str:
         """Generate a weekly summary reflection."""
@@ -279,18 +345,3 @@ class AIReflection:
                 summary += f"\n✓ Activity levels similar to last week ({change:.0f}% change). Steady progress!"
         
         return summary
-    
-    def generate_motivational_reflection(self) -> str:
-        """Generate a motivational reflection based on long-term patterns."""
-        insights = self.memory_engine.user_profile.get("behavioral_patterns", {})
-        weekly = insights.get("weekly", {})
-        
-        # Check for streaks or improvements
-        if weekly.get("trend") == "increasing":
-            return "🌟 You're building momentum! Your consistency is creating positive habits. Keep going!"
-        elif weekly.get("trend") == "decreasing":
-            return "💪 Every day is a new opportunity. Small steps today can rebuild your momentum - you've got this!"
-        elif weekly.get("consistency_score", 0) > 0.7:
-            return "🎯 Your consistency is your superpower! Those small daily actions add up to big results."
-        else:
-            return "✨ Progress isn't always linear. The important thing is that you're showing up and tracking your journey!"

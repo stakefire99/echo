@@ -1,0 +1,114 @@
+# modules/report_generator.py
+"""Generate beautiful reports from ECHO data"""
+
+import json
+from datetime import datetime, timedelta
+from typing import Dict
+import pandas as pd
+
+class ReportGenerator:
+    def __init__(self, event_logger, memory_engine, ai_reflection):
+        self.event_logger = event_logger
+        self.memory_engine = memory_engine
+        self.ai_reflection = ai_reflection
+    
+    def generate_weekly_summary_text(self) -> str:
+        """Generate a shareable text summary"""
+        week_ago = datetime.now() - timedelta(days=7)
+        df = self.event_logger.get_events(start_date=week_ago)
+        
+        if df.empty:
+            return "No activities logged this week. Start logging to see your progress!"
+        
+        total = len(df)
+        unique_days = df['date'].nunique()
+        avg_per_day = total / max(unique_days, 1)
+        top_activity = df['event_type'].mode().iloc[0] if not df.empty else "None"
+        
+        # Get comparison
+        two_weeks_ago = datetime.now() - timedelta(days=14)
+        prev_df = self.event_logger.get_events(start_date=two_weeks_ago, end_date=week_ago)
+        
+        summary = f"📊 **Your Week in Review**\n\n"
+        summary += f"📝 **{total}** activities logged\n"
+        summary += f"📅 **{unique_days}** active days\n"
+        summary += f"⭐ **{avg_per_day:.1f}** avg per day\n"
+        summary += f"🎯 Top activity: **{top_activity}**\n"
+        
+        if not prev_df.empty:
+            prev_total = len(prev_df)
+            change = ((total - prev_total) / prev_total) * 100
+            if change > 0:
+                summary += f"\n📈 **+{change:.0f}%** vs last week! 🎉"
+            elif change < 0:
+                summary += f"\n📉 **{abs(change):.0f}%** vs last week. Ready for a comeback?"
+            else:
+                summary += f"\n✓ Same as last week. Consistency!"
+        
+        # Add top insight
+        reflection = self.ai_reflection.generate_time_aware_reflection()
+        summary += f"\n\n💡 **Insight:** {reflection[:150]}..."
+        
+        return summary
+    
+    def generate_tweet_summary(self) -> str:
+        """Generate a tweet-length summary"""
+        week_ago = datetime.now() - timedelta(days=7)
+        df = self.event_logger.get_events(start_date=week_ago)
+        
+        if df.empty:
+            return "Just started using ECHO to track my productivity! 🧠 #ECHO #Productivity"
+        
+        total = len(df)
+        
+        # Get comparison
+        two_weeks_ago = datetime.now() - timedelta(days=14)
+        prev_df = self.event_logger.get_events(start_date=two_weeks_ago, end_date=week_ago)
+        
+        if not prev_df.empty:
+            prev_total = len(prev_df)
+            change = ((total - prev_total) / prev_total) * 100
+            if change > 0:
+                return f"🔥 Just had my most productive week! +{change:.0f}% more activities. ECHO knows my patterns now. 🧠 #ECHO #ProductivityWin"
+            elif change < -10:
+                return f"📉 Tough week for productivity (-{abs(change):.0f}%). Time to reset with ECHO. 🧠 #ECHO #NewWeek"
+        
+        return f"📊 Logged {total} activities this week with ECHO. Building better habits one day at a time. 🧠 #ECHO #Productivity"
+    
+    def generate_markdown_report(self) -> str:
+        """Generate a full markdown report"""
+        week_ago = datetime.now() - timedelta(days=7)
+        df = self.event_logger.get_events(start_date=week_ago)
+        
+        if df.empty:
+            return "# ECHO Report\n\nNo data available yet. Start logging activities!"
+        
+        report = f"# 🧠 ECHO Weekly Report\n\n"
+        report += f"**Generated:** {datetime.now().strftime('%B %d, %Y at %H:%M')}\n\n"
+        
+        report += f"## 📊 Summary\n\n"
+        report += f"- **Total Activities:** {len(df)}\n"
+        report += f"- **Active Days:** {df['date'].nunique()}\n"
+        report += f"- **Average per Day:** {len(df) / df['date'].nunique():.1f}\n"
+        report += f"- **Total Duration:** {df['duration_minutes'].sum() / 60:.1f} hours\n\n"
+        
+        report += f"## 📈 Activity Breakdown\n\n"
+        report += "| Activity Type | Count | Total Hours |\n"
+        report += "|--------------|-------|-------------|\n"
+        for event_type, group in df.groupby('event_type'):
+            count = len(group)
+            hours = group['duration_minutes'].sum() / 60
+            report += f"| {event_type} | {count} | {hours:.1f} |\n"
+        
+        report += f"\n## ⏰ Peak Hours\n\n"
+        hourly = df.groupby('hour').size().sort_values(ascending=False).head(3)
+        report += "Your most productive hours:\n"
+        for hour, count in hourly.items():
+            report += f"- **{hour}:00** ({count} activities)\n"
+        
+        report += f"\n## 💡 AI Insights\n\n"
+        report += f"{self.ai_reflection.generate_time_aware_reflection()}\n\n"
+        
+        report += f"---\n*Generated by ECHO - Your Personal AI Memory System*"
+        
+        return report
